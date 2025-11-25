@@ -1,2 +1,7 @@
 pydantic
 numpy
+pandas
+matplotlib
+seaborn
+scikit-learn==1.7.2
+scipy
