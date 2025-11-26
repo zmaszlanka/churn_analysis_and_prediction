@@ -1,205 +1,254 @@
 import pandas as pd
 import numpy as np
 import uuid
-from typing import get_type_hints
-from pydantic import BaseModel, Field
+from typing import Any
+from pydantic import BaseModel
 from dataset_schema_definition import CustomerChurnSchema
+import re
+import random
 
 
-class DependencyIterator:
-    def __init__(self, schema_cls):
+# ============================================================
+# 1. Dependency resolution
+# ============================================================
+
+class DependencyResolver:
+    def __init__(self, schema_cls: BaseModel):
         self.schema_cls = schema_cls
-        self.fields = schema_cls.model_fields  
-        self.visited = set()
+        self.fields = schema_cls.model_fields
+        self.graph = {}
         self.order = []
-    
-    def _visit(self, field_name):
-        if field_name in self.visited:
-            return
-        field_info = self.fields[field_name]
-        extra = getattr(field_info, "extra", {})
-        dep = extra.get("dependent_on")
-        
-        if dep:
-            if isinstance(dep, list):
-                for d in dep:
-                    self._visit(d)
+
+    def build_graph(self):
+        """Extract dependency mapping from json_schema_extra"""
+        for name, field in self.fields.items():
+            extra = field.json_schema_extra or {}
+            dep = extra.get("dependent_on")
+            if dep is None:
+                self.graph[name] = []
+            elif isinstance(dep, list):
+                self.graph[name] = dep
             else:
-                self._visit(dep)
-        
-        self.visited.add(field_name)
-        self.order.append(field_name)
-    
-    def get_order(self):
-        for field_name in self.fields.keys():
-            self._visit(field_name)
+                self.graph[name] = [dep]
+
+    def topological_sort(self):
+        visited = set()
+        stack = set()
+
+        def dfs(node):
+            if node in stack:
+                raise ValueError(f"Circular dependency detected at {node}.")
+            if node in visited:
+                return
+
+            stack.add(node)
+            for dep in self.graph.get(node, []):
+                if dep in self.fields:
+                    dfs(dep)
+            stack.remove(node)
+            visited.add(node)
+            self.order.append(node)
+
+        for field in self.fields.keys():
+            dfs(field)
+
         return self.order
 
-class DatasetGenerator:
-    def __init__(self, schema_cls, n_rows=10):
-        self.schema_cls = schema_cls
-        self.n_rows = n_rows
-        self.dependency_iterator = DependencyIterator(schema_cls)
-        self.generation_order = self.dependency_iterator.get_order()
+    def resolve(self):
+        self.build_graph()
+        return self.topological_sort()
+
+
+# ============================================================
+# 2. Value Generator
+# ============================================================
+
+class ValueGenerator:
+    def __init__(self):
+        pass
     
-    def generate_value(self, field_info, current_row):
-        """Generate value based on field_info metadata"""
-        # Formula first
-        formula = getattr(field_info, "formula", None)
+
+    def match_rule(self, x, rules):
+        """
+        Evaluate rules for conditional distributions.
+        Supports:
+        - Numeric ranges: "23-29"
+        - Boolean expressions: "x >= 18 and x <= 22"
+        - Exact numeric match: "18"
+        - Exact string match: "male", "female", etc.
+        - Default fallback
+        """
+        # -------- Try numeric rules
+        is_numeric = False
+        try:
+            x_num = float(x)
+            is_numeric = True
+        except (ValueError, TypeError):
+            pass
+
+        for rule_key, rule_val in rules.items():
+            if rule_key == "default":
+                continue
+
+            if is_numeric:
+                # numeric range like "23-29"
+                if re.match(r"^\d+(\.\d+)?\s*-\s*\d+(\.\d+)?$", rule_key):
+                    a, b = map(float, rule_key.split("-"))
+                    if a <= x_num <= b:
+                        return rule_val
+
+                # boolean expression with 'x'
+                elif "x" in rule_key:
+                    try:
+                        if eval(rule_key, {"x": x_num}):
+                            return rule_val
+                    except Exception:
+                        pass
+
+                # exact numeric match
+                else:
+                    try:
+                        if float(rule_key) == x_num:
+                            return rule_val
+                    except Exception:
+                        pass
+            else:
+                # string match
+                if str(rule_key) == str(x):
+                    return rule_val
+
+        # fallback to default
+        return rules.get("default")
+        
+    
+    def generate(self, field_name: str, field_info, row: dict):
+        extra = field_info.json_schema_extra or {}
+
+        # -----------------------------------------------------------
+        # 1) Formula
+        # -----------------------------------------------------------
+        formula = extra.get("formula")
         if formula:
             try:
-                return eval(formula)
+                if 'row' in formula:
+                    return eval(formula, {"row": row, "random": random, "np": np})
+                return eval(formula, {"random": random, "np": np, "uuid": uuid})
             except Exception as e:
-                print(f"Error in formula {formula}: {e}")
-                return None
+                print(f"Formula error for field {field_name}: {e}")
 
-        # Distribution handling
-        print(field_info.metadata)
-        extra = getattr(field_info, "metadata", {})  # <- contains distribution, dependent_on, formula
-        print(extra)
+        # -----------------------------------------------------------
+        # 2) Distribution
+        # -----------------------------------------------------------
         dist = extra.get("distribution")
-        formula = extra.get("formula")
         if not dist:
-            print(f'No distribution found for field{field_info}')
             return None
 
-        if dist['dist'] == 'normal':
-            mean = dist.get('mean', 0)
-            sd = dist.get('sd', 1)
-            min_val = dist.get('min', -np.inf)
-            max_val = dist.get('max', np.inf)
-            val = np.random.normal(mean, sd)
-            return min(max(val, min_val), max_val)
+        dist_type = dist.get("dist")
 
-        if dist['dist'] == 'poisson':
-            lam = dist.get('lambda', 1)
-            return np.random.poisson(lam)
+        # ------------------------
+        # CONDITIONAL LOGIC
+        # ------------------------
+        condition_on = dist.get("condition_on")
+        rules = dist.get("rules")
 
-        if dist['dist'] == 'categorical':
-            categories = dist.get('categories')
-            if categories:
-                return np.random.choice(categories)
-            return None
+        if condition_on and rules:
+            cond_value = row.get(condition_on)
 
-        if dist['dist'] == 'bernoulli':
-            p = dist.get('p', 0.5)
-            return np.random.rand() < p
+            # Use the new rule parser
+            selected_rule = self.match_rule(cond_value, rules)
+
+            if selected_rule:
+                dist = {**dist, **selected_rule}
+
+
+        # =====================================================================
+        # Distribution Types
+        # =====================================================================
+
+        # -------- Normal --------
+        if dist_type == "normal":
+            mean = dist.get("mean")
+            sd = dist.get("sd")
+            min_v = dist.get("min")
+            max_v = dist.get("max")
+            v = np.random.normal(mean, sd)
+            return int(np.clip(v, min_v, max_v))
+
+        # -------- Poisson --------
+        if dist_type == "poisson":
+            min_v = dist.get("min", 0)
+            lam = dist.get("lambda", 1)
+            generated_value = int(np.random.poisson(lam))
+            if generated_value < min_v:
+                generated_value = min_v
+            return generated_value
+
+        # -------- Exponential --------
+        if dist_type == "exponential":
+            scale = dist.get("scale", 1)
+            return int(np.random.exponential(scale))
+
+        # -------- Lognormal --------
+        if dist_type == "lognormal":
+            # default: mean=0, sigma=1
+            mean = dist.get("mean", 0)
+            sigma = dist.get("sd", 1)
+            min_v = dist.get("min")
+            max_v = dist.get("max")
+            v = np.random.lognormal(mean, sigma)
+            v = np.clip(v, min_v, max_v)
+            return int(v)
+
+        # -------- Categorical --------
+        if dist_type == "categorical":
+            cats = dist.get("categories")
+            probs = None
+            if "probs" in dist:
+                probs = list(dist["probs"].values())
+                cats = list(dist["probs"].keys())
+            return np.random.choice(cats, p=probs) if probs else np.random.choice(cats)
+
+        # -------- Bernoulli --------
+        if dist_type == "bernoulli":
+            return bool(np.random.rand() < dist.get("p", 0.5))
 
         return None
 
-    def generate_dataset(self):
-        data = []
 
-        for i in range(self.n_rows):
+# ============================================================
+# 3. Dataset Generator
+# ============================================================
+
+class DatasetGenerator:
+    def __init__(self, schema_cls, n_rows=1000, csv_path="generated_data.csv"):
+        self.schema_cls = schema_cls
+        self.n_rows = n_rows
+        self.csv_path = csv_path
+        self.resolver = DependencyResolver(schema_cls)
+        self.order = self.resolver.resolve()
+        self.value_gen = ValueGenerator()
+
+    def generate(self):
+        rows = []
+
+        for _ in range(self.n_rows):
             row = {}
-            for field_name in self.generation_order:
-                field_info = self.schema_cls.model_fields[field_name] 
-                row[field_name] = self.generate_value(field_info, row)
-            data.append(row)
+            for field_name in self.order:
+                field_info = self.schema_cls.model_fields[field_name]
+                row[field_name] = self.value_gen.generate(field_name, field_info, row)
+            rows.append(row)
 
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(rows)
+        df.to_csv(self.csv_path, index=False)
+        print(f"Dataset saved to: {self.csv_path}")
         return df
 
+
+# ============================================================
+# 4. Run end-to-end generation
+# ============================================================
+
 if __name__ == "__main__":
-    generator = DatasetGenerator(CustomerChurnSchema, n_rows=1000)
-    df = generator.generate_dataset()
+    generator = DatasetGenerator(CustomerChurnSchema, n_rows=500, csv_path="customer_churn_synthetic.csv")
+    df = generator.generate()
     print(df.head())
-    # df.to_csv("llm_generated_customers.csv", index=False)
-
-
-# def generate_value(field_info, current_row):
-#     """Generate value based on field_info metadata"""
-#     # Formula first
-#     formula = getattr(field_info, "formula", None)
-#     if formula:
-#         try:
-#             return eval(formula)
-#         except Exception as e:
-#             print(f"Error in formula {formula}: {e}")
-#             return None
-
-#     # Distribution handling
-#     dist = getattr(field_info, "distribution", None)
-#     if not dist:
-#         return None
-
-#     if dist['dist'] == 'normal':
-#         mean = dist.get('mean', 0)
-#         sd = dist.get('sd', 1)
-#         min_val = dist.get('min', -np.inf)
-#         max_val = dist.get('max', np.inf)
-#         val = np.random.normal(mean, sd)
-#         return min(max(val, min_val), max_val)
-
-#     if dist['dist'] == 'poisson':
-#         lam = dist.get('lambda', 1)
-#         return np.random.poisson(lam)
-
-#     if dist['dist'] == 'categorical':
-#         categories = dist.get('categories')
-#         if categories:
-#             return np.random.choice(categories)
-#         return None
-
-#     if dist['dist'] == 'bernoulli':
-#         p = dist.get('p', 0.5)
-#         return np.random.rand() < p
-
-#     return None
-
-# def resolve_dependencies(schema_cls):
-#     """Resolve field dependencies using Pydantic v2 API"""
-#     fields = schema_cls.model_fields  # <-- v2 replacement for __fields__
-#     sorted_fields = []
-#     remaining = set(fields.keys())
-
-#     while remaining:
-#         progress = False
-#         for f in list(remaining):
-#             # Access extra metadata
-#             extra = getattr(fields[f], "extra", {})
-#             dep = extra.get("dependent_on")
-            
-#             if dep is None:
-#                 sorted_fields.append(f)
-#                 remaining.remove(f)
-#                 progress = True
-#             elif isinstance(dep, list) and all(d in sorted_fields for d in dep):
-#                 sorted_fields.append(f)
-#                 remaining.remove(f)
-#                 progress = True
-#             elif isinstance(dep, str) and dep in sorted_fields:
-#                 sorted_fields.append(f)
-#                 remaining.remove(f)
-#                 progress = True
-
-#         if not progress:
-#             raise ValueError(f"Circular or unresolved dependency detected among: {remaining}")
-
-#     return sorted_fields
-
-
-# def generate_dataset(schema_cls, n_rows=10):
-#     order = resolve_dependencies(schema_cls)
-#     data = []
-
-#     for i in range(n_rows):
-#         row = {}
-#         for field_name in order:
-#             field_info = schema_cls.model_fields[field_name] 
-#             row[field_name] = generate_value(field_info, row)
-#         data.append(row)
-
-#     df = pd.DataFrame(data)
-#     return df
-
-# # ---------------------------
-# # Usage example
-# # ---------------------------
-# # Replace `CustomerChurnSchema` with your full Pydantic model
-# # from your file
-# # from your_module import CustomerChurnSchema
-
-# df = generate_dataset(CustomerChurnSchema, n_rows=10)
-# print(df.head())
-# df.to_csv("output.csv", index=False)

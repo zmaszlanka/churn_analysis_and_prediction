@@ -27,8 +27,6 @@ class Config:
                                               df["mobile_app_logins_3m"].replace(0, np.nan)).fillna(0),
         "balance_stability_ratio": lambda df: (df["avg_monthly_balance_3m"] /
                                                df["avg_monthly_balance_12m"].replace(0, np.nan)).fillna(1),
-        "credit_utilization_proxy": lambda df: (df["revolving_balance"] /
-                                                df["credit_limit"].replace(0, np.nan)).fillna(0),
         "inactivity_gap": lambda df: df["days_from_last_login"] - df["days_from_last_transaction"],
 
         # Buckets
