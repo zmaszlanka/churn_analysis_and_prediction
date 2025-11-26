@@ -1,1 +1,4 @@
-src/synthetic_dataset/generate/__pycache__/
+src/synthetic_dataset/__pycache__/
+src/preprocessing/__pycache__/
+src/models/__pycache__/
+.venv/ 

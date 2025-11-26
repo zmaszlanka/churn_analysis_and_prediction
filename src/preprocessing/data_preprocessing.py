@@ -56,7 +56,7 @@ class Config:
     identifier_column: str = "customer_id" # specify identifier column name
     numeric_missing_value_strategy: str = "median" #for simplicity we use the same strategy for all numeric columns
     scaler = StandardScaler() # for simplicity we use the same scaler for all numeric columns
-    pca: bool = False # whether to apply PCA for dimensionality reduction
+    pca: bool = True # whether to apply PCA for dimensionality reduction
     pca_components: int = 30 # number of PCA components to keep if PCA is applied
 
 # ============================================================
@@ -184,7 +184,7 @@ class DataPreprocessor:
 
 if __name__ == "__main__":
     # Load raw dataset
-    df_raw = pd.read_csv("src\\synthetic_dataset\\generate\\llm_generated_customers.csv")
+    df_raw = pd.read_csv("data\\customer_churn_synthetic.csv")
 
     # Init config + modules
     config = Config()
@@ -195,5 +195,5 @@ if __name__ == "__main__":
     df_processed = preprocessor.preprocess(df_raw, fit=True)
 
     # Save outputs - potential improvement : dataset versioning
-    df_processed.to_csv("src\\synthetic_dataset\\generate\\preprocessed.csv", index=False)
+    df_processed.to_csv("data\\customer_churn_synthetic_preprocessed_with_pca.csv", index=False)
     print(df_processed.head())

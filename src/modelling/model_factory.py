@@ -117,11 +117,14 @@ class ChurnModelPipeline:
         # self.explain_shap()
         return self.results
 
+
+# possible extensions: hyperparameter tuning, more data preprocessing
+
 # ============================================================
 #   USAGE EXAMPLE
 # ============================================================
 
 if __name__ == "__main__":
-    df_preprocessed = pd.read_csv("src/synthetic_dataset/generate/preprocessed.csv")
+    df_preprocessed = pd.read_csv("data/customer_churn_synthetic_preprocessed_with_pca.csv")
     pipeline = ChurnModelPipeline(df_preprocessed, target_col="churn")
     results = pipeline.run()

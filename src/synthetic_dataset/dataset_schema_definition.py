@@ -1,7 +1,5 @@
 from typing import Optional, Literal
-from datetime import date
-from pydantic import BaseModel, Field, validator, root_validator
-
+from pydantic import BaseModel, Field
 
 
 # Assumptions:
@@ -13,17 +11,16 @@ from pydantic import BaseModel, Field, validator, root_validator
 # - Bank offers only following products: different account types, debit/credit cards, loans
 # - Not all real world deppendencies are modeled to keep schema manageable
 
+
 class CustomerChurnSchema(BaseModel):
     """Pydantic model representing a single digital bank customer snapshot.
     Features are all prior to churn to avoid leakage.
-  
     """
 
     # ---------------------------
     # Customer Demographics
     # ---------------------------
-    # Customer identifier: keep distribution None and provide a `formula` helper
-    # so generators implementers can use the supplied formula to create IDs.
+ 
     customer_id: str = Field(
         ...,
         description="Unique customer identifier (UUID4).",
@@ -31,20 +28,49 @@ class CustomerChurnSchema(BaseModel):
         dependent_on=None,
         formula="uuid.uuid4().hex",
     )
-    age: int = Field(..., description="Customer age in years", type= int, distribution={"dist": "normal", "mean": 40, "sd": 12, "min": 18, "max": 100}, dependent_on=None)
+
+    age: int = Field(
+        ...,
+        description="Customer age in years",
+        type=int,
+        distribution={"dist": "normal", "mean": 40, "sd": 12, "min": 18, "max": 100},
+        dependent_on=None,
+    )
+
     gender: Literal["male", "female"] = Field(
         ...,
         description="Recorded gender category",
-        type= str,
+        type=str,
         distribution={
             "dist": "categorical",
             "categories": ["male", "female"],
-            "probs": {"male": 0.5, "female": 0.5}
+            "probs": {"male": 0.5, "female": 0.5},
         },
         dependent_on=None,
     )
-    city_population: int = Field(..., description="Population of customer's city", type= int, distribution={"dist": "normal", "min": 500, "mean": 200000, "sd": 100000, "max": 32000000}, dependent_on=None)
-    household_size: int = Field(..., description="Number of people in household", type= int, distribution={"dist": "poisson", "lambda": 2, "min": 1, "max": 7}, dependent_on=None) #could be dependent on city size butskipped for siomplicity
+
+    city_population: int = Field(
+        ...,
+        description="Population of customer's city",
+        type=int,
+        distribution={
+            "dist": "normal",
+            "min": 500,
+            "mean": 200000,
+            "sd": 100000,
+            "max": 32000000,
+        },
+        dependent_on=None,
+    )
+
+    household_size: int = Field(
+        ...,
+        description="Number of people in household",
+        type=int,
+        distribution={"dist": "poisson", "lambda": 2, "min": 1, "max": 7},
+        dependent_on=None,  # could be dependent on city size but skipped for simplicity
+    )
+
     annual_income: float = Field(
         ...,
         ge=0,
@@ -66,6 +92,7 @@ class CustomerChurnSchema(BaseModel):
         },
         dependent_on="education_level",
     )
+
     education_level: Literal[
         "no_formal_education",
         "primary_education",
@@ -77,7 +104,7 @@ class CustomerChurnSchema(BaseModel):
     ] = Field(
         ...,
         description="Highest reported education level or unknown",
-        type= str,
+        type=str,
         distribution={
             "dist": "categorical",
             "condition_on": "age",
@@ -172,7 +199,8 @@ class CustomerChurnSchema(BaseModel):
         },
         dependent_on="age",
     )
-    employment_status: Literal[ #could be dependent on education but skipped for simplicity (retired is highly correlated with age so I've decided to use age only for now)
+
+    employment_status: Literal[
         "employed",
         "unemployed",
         "student",
@@ -181,8 +209,9 @@ class CustomerChurnSchema(BaseModel):
         "other",
     ] = Field(
         ...,
+        # could be dependent on education but skipped for simplicity
         description="Employment status category",
-        type= str,
+        type=str,
         distribution={
             "dist": "categorical",
             "condition_on": "age",
@@ -273,10 +302,23 @@ class CustomerChurnSchema(BaseModel):
     # ---------------------------
     # Account / Product Usage
     # ---------------------------
-    tenure_months: int = Field(..., ge=0, description="Months since account opened", distribution={"dist": "exponential", "scale": 24}, dependent_on=None)
-    main_account_type: Literal["standard", "savings", "student", "business"] = Field(..., distribution={"dist": "categorical", "categories": ["standard", "savings", "student", "business"], 
-                                                                                                        "rules": { "x == 'no_formal_education'": {
-            "probs": {"standard": 0.7, "savings": 0.2, "student": 0.0, "business": 0.1}
+
+    tenure_months: int = Field(
+        ...,
+        ge=0,
+        description="Months since account opened",
+        distribution={"dist": "exponential", "scale": 24},
+        dependent_on=None,
+    )
+
+    main_account_type: Literal["standard", "savings", "student", "business"] = Field(
+        ...,
+        distribution={
+            "dist": "categorical",
+            "categories": ["standard", "savings", "student", "business"],
+            "rules": {
+                "x == 'no_formal_education'": {
+                    "probs": {"standard": 0.7, "savings": 0.2, "student": 0.0, "business": 0.1}
                 },
                 "x == 'primary_education'": {
                     "probs": {"standard": 0.9, "savings": 0.04, "student": 0.0, "business": 0.06}
@@ -296,57 +338,116 @@ class CustomerChurnSchema(BaseModel):
                 "default": {
                     "probs": {"standard": 0.8, "savings": 0.05, "student": 0.1, "business": 0.05}
                 },
-            },}, dependent_on="employment_status")
+            },
+        },
+        dependent_on="employment_status",
+    )
 
-    num_standard_accounts: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 1, "min": 0,"condition_on": "main_account_type", "rules": {
-                "standard": {"lambda": 2},
-                "savings": {"lambda": 1},
-                "student": {"lambda": 0},
-                "business": {"lambda": 1},
-                "default": {"lambda": 1}
-            }}, dependent_on="main_account_type")
-    num_savings_accounts: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 0.5, "min": 0,"condition_on": "main_account_type", "rules": {
-                "standard": {"lambda": 1},
-                "savings": {"lambda": 2},
-                "student": {"lambda": 0},
-                "business": {"lambda": 0},
-                "default": {"lambda": 0.5}
-            }}, dependent_on="main_account_type")
-    num_student_accounts: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 0.1, "min": 0,"condition_on": "main_account_type", "rules": {
-                "standard": {"lambda": 0},
-                "savings": {"lambda": 0},
-                "student": {"lambda": 1},
-                "business": {"lambda": 0},
-                "default": {"lambda": 0.1}
-            }}, dependent_on="main_account_type")
-    num_business_accounts: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 0.2, "min": 0,"condition_on": "main_account_type", "rules": {
-                "standard": {"lambda": 0},
-                "savings": {"lambda": 0},
-                "student": {"lambda": 0},
-                "business": {"lambda": 2},
-                "default": {"lambda": 0.2}
-            }}, dependent_on="main_account_type")
+    num_standard_accounts: int = Field(
+        0,
+        ge=0,
+        distribution={
+            "dist": "poisson",
+            "lambda": 1,
+            "min": 0,
+            "condition_on": "main_account_type",
+            "rules": {"standard": {"lambda": 2}, "savings": {"lambda": 1}, "student": {"lambda": 0}, "business": {"lambda": 1}, "default": {"lambda": 1}},
+        },
+        dependent_on="main_account_type",
+    )
 
-    num_of_accounts: int = Field(1, description="Total number of accounts held", distribution=None, dependent_on=['num_standard_accounts', 'num_savings_accounts', 'num_student_accounts', 'num_business_accounts'],  formula="row['num_standard_accounts'] + row['num_savings_accounts'] + row['num_student_accounts'] + row['num_business_accounts']")
+    num_savings_accounts: int = Field(
+        0,
+        ge=0,
+        distribution={
+            "dist": "poisson",
+            "lambda": 0.5,
+            "min": 0,
+            "condition_on": "main_account_type",
+            "rules": {"standard": {"lambda": 1}, "savings": {"lambda": 2}, "student": {"lambda": 0}, "business": {"lambda": 0}, "default": {"lambda": 0.5}},
+        },
+        dependent_on="main_account_type",
+    )
 
-    number_of_debit_cards: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 1, "min": 0, "condition_on": "num_of_accounts",
+    num_student_accounts: int = Field(
+        0,
+        ge=0,
+        distribution={
+            "dist": "poisson",
+            "lambda": 0.1,
+            "min": 0,
+            "condition_on": "main_account_type",
+            "rules": {"standard": {"lambda": 0}, "savings": {"lambda": 0}, "student": {"lambda": 1}, "business": {"lambda": 0}, "default": {"lambda": 0.1}},
+        },
+        dependent_on="main_account_type",
+    )
+
+    num_business_accounts: int = Field(
+        0,
+        ge=0,
+        distribution={
+            "dist": "poisson",
+            "lambda": 0.2,
+            "min": 0,
+            "condition_on": "main_account_type",
+            "rules": {"standard": {"lambda": 0}, "savings": {"lambda": 0}, "student": {"lambda": 0}, "business": {"lambda": 2}, "default": {"lambda": 0.2}},
+        },
+        dependent_on="main_account_type",
+    )
+
+    num_of_accounts: int = Field(
+        1,
+        description="Total number of accounts held",
+        distribution=None,
+        dependent_on=["num_standard_accounts", "num_savings_accounts", "num_student_accounts", "num_business_accounts"],
+        formula=(
+            "row['num_standard_accounts'] + row['num_savings_accounts'] + "
+            "row['num_student_accounts'] + row['num_business_accounts']"
+        ),
+    )
+
+    number_of_debit_cards: int = Field(
+        0,
+        ge=0,
+        distribution={
+            "dist": "poisson",
+            "lambda": 1,
+            "min": 0,
+            "condition_on": "num_of_accounts",
             "rules": {
-                "x<2": {"lambda": 0},
-                "x>=2 and x<4": {"lambda": 1},
-                "x>=4 and x<7": {"lambda": 2},
-                "x>=7 and x<11": {"lambda": 3},
-                "default": {"lambda": 1}
-            }}, dependent_on="num_of_accounts")
-    number_of_credit_cards: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 0.5, "min": 0, "condition_on": "num_of_accounts",
+                "x<2": {"lambda": 1},
+                "x>=2 and x<4": {"lambda": 3},
+                "x>=4 and x<7": {"lambda": 4},
+                "x>=7 and x<11": {"lambda": 5},
+                "default": {"lambda": 1},
+            },
+        },
+        dependent_on="num_of_accounts",
+    )
+
+    number_of_credit_cards: int = Field(
+        0,
+        ge=0,
+        distribution={
+            "dist": "poisson",
+            "lambda": 0.5,
+            "min": 0,
+            "condition_on": "num_of_accounts",
             "rules": {
                 "x<2": {"lambda": 0},
                 "x>=2 and x<4": {"lambda": 0},
                 "x>=4 and x<7": {"lambda": 1},
                 "x>=7 and x<11": {"lambda": 2},
-                "default": {"lambda": 0.5}
-            }}, dependent_on="num_of_accounts")
+                "default": {"lambda": 0.5},
+            },
+        },
+        dependent_on="num_of_accounts",
+    )
 
-    total_loan_amount: float = Field(0, description="Outstanding principal in EUR", distribution={
+    total_loan_amount: float = Field(
+        0,
+        description="Outstanding principal in EUR",
+        distribution={
             "dist": "normal",
             "sd": 10000,
             "mean": 0,
@@ -355,10 +456,17 @@ class CustomerChurnSchema(BaseModel):
                 "x==0": {"sd": 0, "mean": 0, "min": 0},
                 "x>=1 and x<=2": {"sd": 100000, "mean": 200000, "min": 0},
                 "x>=3": {"sd": 100000, "mean": 1000000, "min": 0},
-                "default": {"sd": 20000, "mean": 200000, "min": 0}
-            }
-        }, dependent_on="number_of_loans")
-    number_of_loans: int = Field(0, distribution={"dist": "poisson", "lambda": 0.2, "min": 0}, dependent_on=None)
+                "default": {"sd": 20000, "mean": 200000, "min": 0},
+            },
+        },
+        dependent_on="number_of_loans",
+    )
+
+    number_of_loans: int = Field(
+        0,
+        distribution={"dist": "poisson", "lambda": 0.2, "min": 0},
+        dependent_on=None,
+    )
 
     # ---------------------------
     # Financial Behavior
@@ -368,7 +476,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         description="Total balance across accounts in EUR",
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "mean": 1000,
             "sd": 500,
             "min": 0,
@@ -380,11 +488,7 @@ class CustomerChurnSchema(BaseModel):
     days_from_last_transaction: int = Field(
         None,
         ge=0,
-        distribution={
-            "dist": "exponential",
-            "scale": 30,
-            "min": 0,
-        },
+        distribution={"dist": "exponential", "scale": 30, "min": 0},
         dependent_on=None,
     )
 
@@ -392,7 +496,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "current_balance",
             "rules": {
                 "x<500": {"mean": 200, "sd": 50, "min": 0, "max": 10000000000000},
@@ -408,7 +512,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "current_balance",
             "rules": {
                 "x<500": {"mean": 180, "sd": 50, "min": 0, "max": 10000000000000},
@@ -424,7 +528,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "annual_income",
             "rules": {
                 "x<30000": {"mean": 500, "sd": 100, "min": 0, "max": 10000000000000},
@@ -440,7 +544,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "avg_monthly_spend_3m",
             "rules": {
                 "x==0": {"mean": 0, "sd": 0},
@@ -478,7 +582,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "transaction_count_3m",
             "rules": {
                 "x==0": {"mean": 0, "sd": 0, "min": 0, "max": 10000000000000},
@@ -494,7 +598,7 @@ class CustomerChurnSchema(BaseModel):
         ...,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "transaction_volume_3m",
             "rules": {
                 "x==0": {"mean": 0, "sd": 0, "min": 0, "max": 10000000000000},
@@ -514,11 +618,7 @@ class CustomerChurnSchema(BaseModel):
             "dist": "poisson",
             "lambda": 0.1,
             "condition_on": "transaction_count_3m",
-            "rules": {
-                "x==0": {"lambda": 0, "min": 0},
-                "x>0": {"lambda": 0.1, "min": 0},
-                "default": {"lambda": 0.1, "min": 0},
-            },
+            "rules": {"x==0": {"lambda": 0, "min": 0}, "x>0": {"lambda": 0.1, "min": 0}, "default": {"lambda": 0.1, "min": 0}},
         },
         dependent_on="transaction_count_3m",
     )
@@ -529,25 +629,20 @@ class CustomerChurnSchema(BaseModel):
         distribution={
             "dist": "poisson",
             "condition_on": "transaction_count_12m",
-            "rules": {
-                "x==0": {"lambda": 0, "min": 0},
-                "x>0": {"lambda": 0.5, "min": 0},
-                "default": {"lambda": 0.5, "min": 0},
-            },
+            "rules": {"x==0": {"lambda": 0, "min": 0}, "x>0": {"lambda": 0.5, "min": 0}, "default": {"lambda": 0.5, "min": 0}},
         },
         dependent_on="transaction_count_12m",
     )
-
 
     loan_payments_12m: float = Field(
         0.0,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "total_loan_amount",
             "rules": {
                 "x==0": {"mean": 0, "sd": 0, "min": 0, "max": 10000000000000},
-                "x>0": {"mean": 800 , "sd": 800, "min": 0, "max": 10000000000000 },
+                "x>0": {"mean": 800, "sd": 800, "min": 0, "max": 10000000000000},
                 "default": {"mean": 0, "sd": 0, "min": 0, "max": 10000000000000},
             },
         },
@@ -558,11 +653,11 @@ class CustomerChurnSchema(BaseModel):
         0.0,
         ge=0,
         distribution={
-            "dist": "lognormal",
+            "dist": "normal",
             "condition_on": "loan_payments_12m",
             "rules": {
                 "x==0": {"mean": 0, "sd": 0, "min": 0, "max": 10000000000000},
-                "x>0": {"mean": 200 , "sd": 200, "min": 0, "max": 10000000000000 },
+                "x>0": {"mean": 200, "sd": 200, "min": 0, "max": 10000000000000},
                 "default": {"mean": 0, "sd": 0, "min": 0, "max": 10000000000000},
             },
         },
@@ -575,12 +670,7 @@ class CustomerChurnSchema(BaseModel):
             "dist": "poisson",
             "lambda": 0.01,
             "condition_on": "support_contacts_3m",
-            "rules": {
-                "x==0": {"lambda": 0},
-                "x==1": {"lambda": 0.01},
-                "x>=2": {"lambda": 0.02},
-                "default": {"lambda": 0.03}
-            },
+            "rules": {"x==0": {"lambda": 0}, "x==1": {"lambda": 0.01}, "x>=2": {"lambda": 0.02}, "default": {"lambda": 0.03}},
         },
         dependent_on="support_contacts_3m",
     )
@@ -592,16 +682,10 @@ class CustomerChurnSchema(BaseModel):
             "dist": "poisson",
             "lambda": 0.02,
             "condition_on": "support_contacts_12m",
-            "rules": {
-                "x==0": {"lambda": 0},
-                "x==1": {"lambda": 0.02},
-                "x>=2": {"lambda": 0.03},
-                "default": {"lambda": 0.05}
-            },
+            "rules": {"x==0": {"lambda": 0}, "x==1": {"lambda": 0.02}, "x>=2": {"lambda": 0.03}, "default": {"lambda": 0.05}},
         },
         dependent_on="support_contacts_12m",
     )
-
 
     support_contacts_3m: int = Field(
         0,
@@ -610,12 +694,7 @@ class CustomerChurnSchema(BaseModel):
             "dist": "poisson",
             "lambda": 0.2,
             "condition_on": "mobile_app_logins_3m",
-            "rules": {
-                "x==0": {"lambda": 0},
-                "x>=1 and x <5": {"lambda": 1},
-                "x>=5": {"lambda": 2},
-                "default": {"lambda": 3},
-            },
+            "rules": {"x==0": {"lambda": 0}, "x>=1 and x <5": {"lambda": 1}, "x>=5": {"lambda": 2}, "default": {"lambda": 3}},
         },
         dependent_on="mobile_app_logins_3m",
     )
@@ -627,16 +706,10 @@ class CustomerChurnSchema(BaseModel):
             "dist": "poisson",
             "lambda": 0.5,
             "condition_on": "mobile_app_logins_12m",
-            "rules": {
-                "x==0": {"lambda": 0},
-                "x>=1 and x <5": {"lambda": 1},
-                "x>=5": {"lambda": 2},
-                "default": {"lambda": 4},
-            },
+            "rules": {"x==0": {"lambda": 0}, "x>=1 and x <5": {"lambda": 1}, "x>=5": {"lambda": 2}, "default": {"lambda": 4}},
         },
         dependent_on="mobile_app_logins_12m",
     )
-
 
     last_support_contact_days: Optional[int] = Field(
         None,
@@ -644,10 +717,7 @@ class CustomerChurnSchema(BaseModel):
         distribution={
             "dist": "exponential",
             "condition_on": "support_contacts_3m",
-            "rules": {
-                "x==0": {"scale": 365},
-                "x>0": {"scale": 30},
-            },
+            "rules": {"x==0": {"scale": 365}, "x>0": {"scale": 30}},
         },
         dependent_on="support_contacts_3m",
     )
@@ -655,22 +725,15 @@ class CustomerChurnSchema(BaseModel):
     # -------------------------
     # Satisfaction survey
     # -------------------------
-    received_satisfaction_survey: bool = Field(
-        False,
-        distribution={"dist": "bernoulli", "p": 0.1},
-        dependent_on=None,
-    )
+
+    received_satisfaction_survey: bool = Field(False, distribution={"dist": "bernoulli", "p": 0.1}, dependent_on=None)
 
     filled_satisfaction_survey: bool = Field(
         False,
         distribution={
             "dist": "bernoulli",
             "condition_on": "received_satisfaction_survey",
-            "rules": {
-                "x": {"p": 0.5},
-                "not x": {"p": 0.0},
-                "default": {"p": 0.05},
-            },
+            "rules": {"x": {"p": 0.5}, "not x": {"p": 0.0}, "default": {"p": 0.05}},
         },
         dependent_on="received_satisfaction_survey",
     )
@@ -678,6 +741,7 @@ class CustomerChurnSchema(BaseModel):
     # -------------------------
     # NPS segment
     # -------------------------
+
     nps_segment: Optional[Literal["promoter", "passive", "detractor"]] = Field(
         None,
         distribution={
@@ -696,137 +760,114 @@ class CustomerChurnSchema(BaseModel):
     # ---------------------------
     # Digital Engagement
     # ---------------------------
+
     days_from_last_login: int = Field(
-    None,
-    ge=0,
-    distribution=None,  # This can be calculated via formula if needed
-    dependent_on=["days_from_last_app_login", "days_from_last_web_login"],
-    formula="min(row['days_from_last_app_login'], row['days_from_last_web_login'])"
+        None,
+        ge=0,
+        distribution=None, 
+        dependent_on=["days_from_last_app_login", "days_from_last_web_login"],
+        formula="min(row['days_from_last_app_login'], row['days_from_last_web_login'])",
     )
 
     days_from_last_web_login: Optional[int] = Field(
-    None,
-    ge=0,
-    distribution={
-        "dist": "exponential",
-        "condition_on": "online_banking_logins_3m",
-        "rules": {
-            "zero": {"scale": 365},
-            "positive": {"scale": 30},
+        None,
+        ge=0,
+        distribution={
+            "dist": "exponential",
+            "condition_on": "online_banking_logins_3m",
+            "rules": {"zero": {"scale": 365}, "positive": {"scale": 30}},
         },
-    },
-    dependent_on="online_banking_logins_3m",
-)
+        dependent_on="online_banking_logins_3m",
+    )
+
     days_from_last_app_login: Optional[int] = Field(
-    None,
-    ge=0,
-    distribution={
-        "dist": "exponential",
-        "condition_on": "mobile_app_logins_3m",
-        "rules": {
-            "zero": {"scale": 365},
-            "positive": {"scale": 30},
+        None,
+        ge=0,
+        distribution={
+            "dist": "exponential",
+            "condition_on": "mobile_app_logins_3m",
+            "rules": {"zero": {"scale": 365}, "positive": {"scale": 30}},
         },
-    },
-    dependent_on="mobile_app_logins_3m",
-)
-
-    mobile_app_logins_3m: int = Field(
-    0,
-    ge=0,
-    distribution={"dist": "poisson", "lambda": 3, "min": 0},
-    dependent_on=None,
-    )
-    mobile_app_logins_12m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 30, "min": 0},
-        dependent_on=None,
+        dependent_on="mobile_app_logins_3m",
     )
 
-    online_banking_logins_3m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 2, "min": 0},
-        dependent_on=None,
-    )
-    online_banking_logins_12m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 25, "min": 0},
-        dependent_on=None,
-    )
+    mobile_app_logins_3m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 3, "min": 0}, dependent_on=None)
+
+    mobile_app_logins_12m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 30, "min": 0}, dependent_on=None)
+
+    online_banking_logins_3m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 2, "min": 0}, dependent_on=None)
+
+    online_banking_logins_12m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 25, "min": 0}, dependent_on=None)
 
     # Time spent per login
     avg_time_spent_per_login_minutes_3m: float = Field(
-        0.0,
-        ge=0,
-        distribution={"dist": "normal", "mean": 5, "sd": 2, "min": 0},
-        dependent_on=None,
+        0.0, ge=0, distribution={"dist": "normal", "mean": 5, "sd": 2, "min": 0}, dependent_on=None
     )
+
     avg_time_spent_per_login_minutes_12m: float = Field(
-        0.0,
-        ge=0,
-        distribution={"dist": "normal", "mean": 6, "sd": 3, "min": 0},
-        dependent_on=None,
+        0.0, ge=0, distribution={"dist": "normal", "mean": 6, "sd": 3, "min": 0}, dependent_on=None
     )
 
     # Push notifications
-    push_clicks_3m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 1, "min": 0},
-        dependent_on=None,
-    )
-    push_clicks_12m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 5, "min": 0},
-        dependent_on=None,
-    )
+    push_clicks_3m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 1, "min": 0}, dependent_on=None)
+    push_clicks_12m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 5, "min": 0}, dependent_on=None)
 
     # Marketing emails
-    marketing_emails_opened_3m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 2, "min": 0},
-        dependent_on=None,
-    )
-    marketing_emails_opened_12m: int = Field(
-        0,
-        ge=0,
-        distribution={"dist": "poisson", "lambda": 20, "min": 0},
-        dependent_on=None,
-    )
+    marketing_emails_opened_3m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 2, "min": 0}, dependent_on=None)
+    marketing_emails_opened_12m: int = Field(0, ge=0, distribution={"dist": "poisson", "lambda": 20, "min": 0}, dependent_on=None)
+
     # ---------------------------
     # Target Variable
     # ---------------------------
+
+    # Churn risk is calculated as a weighted combination of key behavioral and financial signals.
+    # Higher churn probability is assigned when customers show inactivity, low balances, low engagement,
+    # or frustration signals. Each component adds or subtracts from a base churn probability:
+
+    # • Days since last login: The longer the inactivity, the higher the churn risk.
+    # • Low recent balance: Customers with very low balances are more likely to stop using the bank.
+    # • Low transaction activity: No or few transactions indicate declining engagement.
+    # • Low mobile app usage: Core engagement metric for a digital bank — low logins signal churn.
+    # • High support contacts or complaints: Indicates dissatisfaction and increases churn risk.
+    # • Low income + loan repayments: Financial stress can lead to leaving the bank.
+    # • Small random noise: Adds realistic variability.
+    # • Constant baseline: Ensures minimal churn probability for all customers.
+
+    # The final risk value is clipped to [0,1] and converted into a churn=True/False using a random draw.
+
+
     churn: bool = Field(
-    False,
-    description="Business-defined churn label (calculated via business rules).",
-    distribution=None,
-    dependent_on=[
-        "days_from_last_activity",
-        "days_from_last_login",
-        "avg_monthly_balance_3m",
-        "support_contacts_12m",
-        "complaints_12m",
-        "transaction_count_3m",
-        "mobile_app_logins_3m",
-        "loan_payments_12m",
-        "annual_income"
-    ],
-    formula="(lambda row: \
+        False,
+        description="Business-defined churn label (calculated via business rules).",
+        distribution=None,
+        dependent_on=[
+            "days_from_last_activity",
+            "days_from_last_login",
+            "avg_monthly_balance_3m",
+            "support_contacts_12m",
+            "complaints_12m",
+            "transaction_count_3m",
+            "mobile_app_logins_3m",
+            "loan_payments_12m",
+            "annual_income",
+        ],
+        formula="(lambda row: \
     (lambda risk: \
         (random.random() < max(0, min(1, risk))) \
     )( \
         0 \
-        + (0.40 if row['days_from_last_login'] > 120 else 0.25 if row['days_from_last_login'] > 60 else 0.10 if row['days_from_last_login'] > 30 else 0) \
-        + (0.15 if row['avg_monthly_balance_3m'] < 100 else 0.05 if row['avg_monthly_balance_3m'] < 500 else 0) \
-        + (0.20 if row['transaction_count_3m'] == 0 else 0.05 if row['transaction_count_3m'] < 5 else 0) \
-        + (0.20 if row['mobile_app_logins_3m'] == 0 else 0.10 if row['mobile_app_logins_3m'] < 3 else 0) \
+        + (0.40 if row['days_from_last_login'] > 120 else \
+           0.25 if row['days_from_last_login'] > 60 else \
+           0.10 if row['days_from_last_login'] > 30 else 0) \
+        + (0.15 if row['avg_monthly_balance_3m'] < 100 else \
+           0.05 if row['avg_monthly_balance_3m'] < 500 else 0) \
+        + (0.20 if row['transaction_count_3m'] == 0 else \
+           0.05 if row['transaction_count_3m'] < 5 else 0) \
+        + (0.20 if row['mobile_app_logins_3m'] == 0 else \
+           0.10 if row['mobile_app_logins_3m'] < 3 else 0) \
         + (0.10 if row['support_contacts_12m'] >= 5 else 0) \
-        + (0.20 if row['complaints_12m'] >= 2 else 0.10 if row['complaints_12m'] == 1 else 0) \
+        + (0.20 if row['complaints_12m'] >= 2 else \
+           0.10 if row['complaints_12m'] == 1 else 0) \
         + (0.10 if (row['loan_payments_12m'] > 0 and row['annual_income'] < 30000) else 0) \
         + (random.uniform(-0.05, 0.05)) \
         + 0.05 \
@@ -834,5 +875,6 @@ class CustomerChurnSchema(BaseModel):
     )(row)"
     )
 
-    # possible enhancement add logical validators
-    
+    # possilbe alternative approach: classify subsamle as churn (manually or with GenAI) and then train a model to predict it
+
+    # possible enhancements to pydantic model: add logical validators
