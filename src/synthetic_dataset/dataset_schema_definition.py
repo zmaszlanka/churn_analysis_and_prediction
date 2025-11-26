@@ -723,7 +723,7 @@ class CustomerChurnSchema(BaseModel):
     )
 
     # -------------------------
-    # Satisfaction survey
+    # Measured satisfaction 
     # -------------------------
 
     received_satisfaction_survey: bool = Field(False, distribution={"dist": "bernoulli", "p": 0.1}, dependent_on=None)
@@ -737,10 +737,6 @@ class CustomerChurnSchema(BaseModel):
         },
         dependent_on="received_satisfaction_survey",
     )
-
-    # -------------------------
-    # NPS segment
-    # -------------------------
 
     nps_segment: Optional[Literal["promoter", "passive", "detractor"]] = Field(
         None,
