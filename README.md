@@ -57,7 +57,7 @@ src/
 
 1. **Clone the repository:**
    ```sh
-   git clone <repo-url>
+   git clone https://github.com/zmaszlanka/churn_analysis_and_prediction.git
    cd churn_analysis_and_prediction
    ```
 
